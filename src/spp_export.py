@@ -1028,6 +1028,11 @@ def main():
         action="store_true",
         help="Print to stdout only, don't write file",
     )
+    parser.add_argument(
+        "--open",
+        action="store_true",
+        help="Open the HTML report in the default browser after generating",
+    )
     args = parser.parse_args()
 
     # Load config (needed even for CSV mode, for output_dir and ignored_ids)
@@ -1075,6 +1080,10 @@ def main():
         eprint(f"Written to {txt_path}")
         eprint(f"Written to {html_path}")
         print(output_txt)
+
+        if args.open:
+            import webbrowser
+            webbrowser.open(html_path.resolve().as_uri())
 
 
 if __name__ == "__main__":
