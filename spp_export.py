@@ -525,7 +525,7 @@ def aggregate(entries: list[dict]) -> dict:
 
 
 def spp_label(project: str, task: str) -> str:
-    return f"{project} / {task}" if task else project
+    return f"{project} – {task}" if task else project
 
 
 def format_spp(groups: dict, start: datetime, end: datetime) -> str:
@@ -553,10 +553,10 @@ def format_spp(groups: dict, start: datetime, end: datetime) -> str:
         if task:
             lines.append(f"Task: {task}")
         lines.append(f"Day: {day_name} {date_str}")
-        lines.append(f"Hours: {data['total_hours']}")
+        lines.append(f"Hours: {data['total_hours']:.2f}")
         lines.append("")
-        for desc, hrs in data["items"]:
-            lines.append(f"- {desc} ({hrs}h)")
+        for desc, hrs in sorted(data["items"], key=lambda x: x[1], reverse=True):
+            lines.append(f"{hrs:.2f}h - {desc}")
         lines.append("")
 
     # --- Summary table ---
@@ -579,10 +579,10 @@ def format_spp(groups: dict, start: datetime, end: datetime) -> str:
         key=lambda d: DAY_ORDER.index(d) if d in DAY_ORDER else 99,
     )
 
-    col_w = 6
+    col_w = 7
     proj_w = max((len(p) for p in row_totals), default=20) + 2
     header = (
-        f"{'Project / Task':<{proj_w}}"
+        f"{'Project – Task':<{proj_w}}"
         + "".join(f"{d[:3]:>{col_w}}" for d in active_days)
         + f"{'TOTAL':>{col_w + 2}}"
     )
@@ -594,8 +594,8 @@ def format_spp(groups: dict, start: datetime, end: datetime) -> str:
         row = f"{label:<{proj_w}}"
         for day in active_days:
             hrs = row_totals[label]["days"].get(day, 0)
-            row += f"{hrs:>{col_w}.1f}" if hrs else f"{'—':>{col_w}}"
-        row += f"{row_totals[label]['total']:>{col_w + 2}.1f}"
+            row += f"{hrs:>{col_w}.2f}" if hrs else f"{'—':>{col_w}}"
+        row += f"{row_totals[label]['total']:>{col_w + 2}.2f}"
         lines.append(row)
         grand_total += row_totals[label]["total"]
 
@@ -603,11 +603,375 @@ def format_spp(groups: dict, start: datetime, end: datetime) -> str:
     total_row = f"{'TOTAL':<{proj_w}}"
     for day in active_days:
         day_sum = sum(rt["days"].get(day, 0) for rt in row_totals.values())
-        total_row += f"{day_sum:>{col_w}.1f}"
-    total_row += f"{grand_total:>{col_w + 2}.1f}"
+        total_row += f"{day_sum:>{col_w}.2f}"
+    total_row += f"{grand_total:>{col_w + 2}.2f}"
     lines.append(total_row)
 
     return "\n".join(lines)
+
+
+def format_html(groups: dict, start: datetime, end: datetime) -> str:
+    """Build self-contained interactive HTML report."""
+
+    # --- Build REPORT_DATA JSON from groups ---
+    # Collect all unique dates and (project, task) pairs
+    all_dates = sorted({date for (_, _, date) in groups})
+    all_pts = []
+    seen = set()
+    for (project, task, _) in groups:
+        key = (project, task)
+        if key not in seen:
+            seen.add(key)
+            all_pts.append(key)
+
+    day_names = [d.strftime("%A") for d in all_dates]
+    date_strs = [d.strftime("%Y-%m-%d") for d in all_dates]
+
+    rows_json = []
+    for (project, task) in all_pts:
+        cells = {}
+        for date in all_dates:
+            data = groups.get((project, task, date))
+            if not data:
+                continue
+            day_name = date.strftime("%A")
+            note_lines = []
+            for desc, hrs in sorted(data["items"], key=lambda x: x[1], reverse=True):
+                note_lines.append(f"{hrs:.2f}h - {desc}")
+            cells[day_name] = {
+                "hours": round(data["total_hours"], 2),
+                "notes": "\n".join(note_lines),
+            }
+        rows_json.append({
+            "project": project,
+            "task": task,
+            "cells": cells,
+        })
+
+    report_data = {
+        "start": start.strftime("%Y-%m-%d"),
+        "end": end.strftime("%Y-%m-%d"),
+        "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "days": day_names,
+        "dates": date_strs,
+        "rows": rows_json,
+    }
+
+    data_json = json.dumps(report_data, ensure_ascii=False, indent=2)
+
+    return HTML_TEMPLATE.replace("__REPORT_DATA_PLACEHOLDER__", data_json)
+
+
+# The HTML template with __REPORT_DATA_PLACEHOLDER__ where the JSON goes.
+HTML_TEMPLATE = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPP Time Report</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #f6f5f1;
+    --surface: #ffffff;
+    --border: #e2e0db;
+    --border-strong: #ccc9c1;
+    --text: #1a1917;
+    --text-secondary: #6b6860;
+    --text-muted: #9b978e;
+    --accent: #2d6a4f;
+    --accent-light: #d4e7dd;
+    --accent-hover: #1b4332;
+    --cell-hover: #f0eeea;
+    --copied-hrs: #e8f0fe;
+    --copied-hrs-border: #a4c4f4;
+    --copied-notes: #edf6f0;
+    --copied-notes-border: #95d5ab;
+    --modal-overlay: rgba(26, 25, 23, 0.4);
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.06);
+    --shadow-lg: 0 12px 48px rgba(0,0,0,0.15);
+    --radius: 6px;
+    --radius-lg: 10px;
+  }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container { max-width: 1200px; margin: 0 auto; padding: 40px 24px; }
+
+  .header { margin-bottom: 32px; }
+  .header h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 6px; }
+  .header .meta { font-size: 13px; color: var(--text-secondary); }
+  .header .meta span + span::before { content: "\b7"; margin: 0 8px; color: var(--text-muted); }
+
+  .progress-wrap { margin-top: 16px; display: flex; gap: 20px; align-items: center; }
+  .progress-item { display: flex; align-items: center; gap: 8px; flex: 1; }
+  .progress-item-label { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+  .progress-item-label.hrs-label { color: #4a7ab5; }
+  .progress-item-label.notes-label { color: var(--accent); }
+  .progress-track { flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 2px; transition: width 0.3s ease; width: 0%; }
+  .progress-fill.hrs-fill { background: #7aade0; }
+  .progress-fill.notes-fill { background: var(--accent); }
+  .progress-count { font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 52px; text-align: right; }
+
+  .grid-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow-x: auto; box-shadow: var(--shadow-sm); }
+  table { width: 100%; border-collapse: collapse; }
+
+  thead th { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); padding: 12px 8px; text-align: center; border-bottom: 1px solid var(--border); background: var(--bg); white-space: nowrap; }
+  thead th:first-child { text-align: left; padding-left: 20px; min-width: 200px; }
+  thead th.col-total { background: transparent; font-weight: 600; color: var(--text-secondary); }
+
+  tbody tr { border-bottom: 1px solid var(--border); }
+  tbody tr:last-child { border-bottom: none; }
+  tbody td { padding: 0; vertical-align: middle; border-right: 1px solid var(--border); }
+  tbody td:last-child { border-right: none; }
+  tbody td:first-child { text-align: left; padding: 12px 20px; border-right: 1px solid var(--border-strong); }
+
+  .row-label { font-size: 13px; line-height: 1.3; }
+  .row-label-project { font-weight: 600; }
+  .row-label-sep { color: var(--text-muted); font-weight: 400; margin: 0 2px; }
+  .row-label-task { font-weight: 400; color: var(--text-secondary); }
+
+  .entry-cell { position: relative; min-height: 52px; display: flex; align-items: stretch; }
+  .entry-hrs { flex: 1; display: flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 500; color: var(--text); cursor: pointer; transition: background 0.1s; user-select: none; padding: 4px 2px 4px 8px; border-radius: 3px 0 0 3px; }
+  .entry-hrs:hover { background: var(--cell-hover); }
+  .entry-hrs[data-copied="true"] { background: var(--copied-hrs); }
+
+  .entry-actions { display: flex; flex-direction: column; width: 30px; min-width: 30px; border-left: 1px solid var(--border); }
+  .entry-btn-notes { flex: 1; display: flex; align-items: center; justify-content: center; cursor: pointer; border: none; background: transparent; font-size: 13px; color: var(--text-muted); transition: all 0.1s; padding: 0; }
+  .entry-btn-notes:hover { background: var(--cell-hover); color: var(--text); }
+  .entry-btn-notes[data-copied="true"] { background: var(--copied-notes); color: var(--accent); }
+  .entry-btn-detail { display: flex; align-items: center; justify-content: center; cursor: pointer; border: none; border-top: 1px solid var(--border); background: transparent; font-size: 11px; color: var(--text-muted); transition: all 0.1s; padding: 3px 0; line-height: 1; }
+  .entry-btn-detail:hover { background: var(--cell-hover); color: var(--text); }
+
+  .cell-empty { display: flex; align-items: center; justify-content: center; min-height: 52px; color: var(--text-muted); font-size: 12px; }
+
+  td.col-total { background: var(--bg); font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 500; padding: 12px 10px; text-align: center; color: var(--text-secondary); }
+
+  .row-total td { background: var(--bg); border-top: 1px solid var(--border-strong); padding: 12px 10px; font-weight: 600; font-size: 13px; }
+  .row-total td:first-child { padding-left: 20px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); }
+  .row-total td.col-total-num { font-family: 'JetBrains Mono', monospace; text-align: center; color: var(--text); }
+
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px); background: var(--text); color: white; padding: 10px 20px; border-radius: var(--radius); font-size: 13px; font-weight: 500; opacity: 0; transition: all 0.2s ease; pointer-events: none; z-index: 200; white-space: nowrap; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  .modal-overlay { display: none; position: fixed; inset: 0; background: var(--modal-overlay); z-index: 100; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); width: 520px; max-width: calc(100vw - 48px); max-height: calc(100vh - 80px); overflow: hidden; animation: modal-in 0.15s ease-out; position: relative; }
+  @keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+  .modal-header { padding: 20px 24px 16px; border-bottom: 1px solid var(--border); }
+  .modal-header h2 { font-size: 15px; font-weight: 600; margin-bottom: 2px; }
+  .modal-header .modal-sub { font-size: 12px; color: var(--text-secondary); }
+  .modal-body { padding: 16px 24px 20px; }
+  .modal-field { margin-bottom: 16px; }
+  .modal-field:last-child { margin-bottom: 0; }
+  .modal-field-label { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 6px; }
+  .modal-field-value { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; font-family: 'JetBrains Mono', monospace; font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
+  .modal-field-value.hours-value { display: inline-block; padding: 8px 14px; font-size: 18px; font-weight: 500; }
+  .modal-actions { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; gap: 10px; justify-content: flex-end; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: var(--radius); font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; transition: all 0.12s; }
+  .btn:hover { background: var(--bg); border-color: var(--border-strong); }
+  .btn-primary { background: var(--accent); color: white; border-color: var(--accent); }
+  .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn .icon { font-size: 14px; line-height: 1; }
+  .btn-copied { background: var(--accent-light) !important; border-color: var(--copied-notes-border) !important; color: var(--accent) !important; }
+  .close-btn { position: absolute; top: 16px; right: 16px; background: none; border: none; font-size: 18px; color: var(--text-muted); cursor: pointer; padding: 4px; line-height: 1; }
+  .close-btn:hover { color: var(--text); }
+  .footer { margin-top: 24px; font-size: 12px; color: var(--text-muted); text-align: center; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>SPP Time Report</h1>
+    <div class="meta"><span id="dateRange"></span><span id="generated"></span></div>
+    <div class="progress-wrap">
+      <div class="progress-item">
+        <span class="progress-item-label hrs-label">Hours</span>
+        <div class="progress-track"><div class="progress-fill hrs-fill" id="hrsFill"></div></div>
+        <span class="progress-count" id="hrsCount">0 / 0</span>
+      </div>
+      <div class="progress-item">
+        <span class="progress-item-label notes-label">Notes</span>
+        <div class="progress-track"><div class="progress-fill notes-fill" id="notesFill"></div></div>
+        <span class="progress-count" id="notesCount">0 / 0</span>
+      </div>
+    </div>
+  </div>
+  <div class="grid-wrap"><table id="grid"></table></div>
+  <div class="footer">Click hours to copy time &middot; &#x1f4cb; copies notes &middot; &hellip; opens detail</div>
+</div>
+<div class="toast" id="toast"></div>
+<div class="modal-overlay" id="overlay">
+  <div class="modal">
+    <button class="close-btn" id="closeBtn">&times;</button>
+    <div class="modal-header"><h2 id="modalTitle"></h2><div class="modal-sub" id="modalSub"></div></div>
+    <div class="modal-body">
+      <div class="modal-field"><div class="modal-field-label">Hours</div><div class="modal-field-value hours-value" id="modalHours"></div></div>
+      <div class="modal-field"><div class="modal-field-label">Notes</div><div class="modal-field-value" id="modalNotes"></div></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="mCopyHours"><span class="icon">&#x23f1;</span> Copy Hours</button>
+      <button class="btn btn-primary" id="mCopyNotes"><span class="icon">&#x1f4cb;</span> Copy Notes</button>
+    </div>
+  </div>
+</div>
+<script>
+const REPORT_DATA = __REPORT_DATA_PLACEHOLDER__;
+const { days, rows } = REPORT_DATA;
+let totalCells = 0;
+const copiedHrs = new Set();
+const copiedNotes = new Set();
+document.getElementById('dateRange').textContent = `${REPORT_DATA.start} \u2192 ${REPORT_DATA.end}`;
+document.getElementById('generated').textContent = `Generated ${REPORT_DATA.generated}`;
+
+function buildGrid() {
+  const table = document.getElementById('grid');
+  rows.forEach(r => { days.forEach(d => { if (r.cells[d]) totalCells++; }); });
+  let html = '<thead><tr><th>Project \u2013 Task</th>';
+  days.forEach(d => { html += `<th>${d.slice(0,3)}</th>`; });
+  html += '<th class="col-total">Total</th></tr></thead><tbody>';
+  rows.forEach((r, ri) => {
+    html += '<tr><td><div class="row-label">';
+    html += `<span class="row-label-project">${esc(r.project)}</span>`;
+    if (r.task) html += `<span class="row-label-sep"> \u2013 </span><span class="row-label-task">${esc(r.task)}</span>`;
+    html += '</div></td>';
+    let rowTotal = 0;
+    days.forEach((d, di) => {
+      const cell = r.cells[d];
+      if (cell) {
+        rowTotal += cell.hours;
+        const key = `${ri}-${di}`;
+        html += `<td><div class="entry-cell">`;
+        html += `<div class="entry-hrs" data-key="${key}" data-action="hrs" title="Copy hours">${cell.hours.toFixed(2)}</div>`;
+        html += `<div class="entry-actions">`;
+        html += `<button class="entry-btn-notes" data-key="${key}" data-action="notes" title="Copy notes">\ud83d\udccb</button>`;
+        html += `<button class="entry-btn-detail" data-key="${key}" data-action="detail" title="View detail">\u22ef</button>`;
+        html += `</div></div></td>`;
+      } else {
+        html += '<td><div class="cell-empty">\u2014</div></td>';
+      }
+    });
+    html += `<td class="col-total">${rowTotal.toFixed(2)}</td></tr>`;
+  });
+  html += '<tr class="row-total"><td>Total</td>';
+  let grandTotal = 0;
+  days.forEach(d => {
+    let s = 0;
+    rows.forEach(r => { if (r.cells[d]) s += r.cells[d].hours; });
+    grandTotal += s;
+    html += `<td class="col-total-num">${s ? s.toFixed(2) : '\u2014'}</td>`;
+  });
+  html += `<td class="col-total-num">${grandTotal.toFixed(2)}</td></tr></tbody>`;
+  table.innerHTML = html;
+  updateProgress();
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function parseKey(key) { const [ri, di] = key.split('-').map(Number); return { ri, di, day: days[di], row: rows[ri], cell: rows[ri].cells[days[di]] }; }
+
+let toastTimer = null;
+function showToast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1400); }
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); }
+  catch { const ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }
+}
+
+function updateProgress() {
+  const hPct = totalCells ? Math.round((copiedHrs.size / totalCells) * 100) : 0;
+  const nPct = totalCells ? Math.round((copiedNotes.size / totalCells) * 100) : 0;
+  document.getElementById('hrsFill').style.width = hPct + '%';
+  document.getElementById('hrsCount').textContent = `${copiedHrs.size} / ${totalCells}`;
+  document.getElementById('notesFill').style.width = nPct + '%';
+  document.getElementById('notesCount').textContent = `${copiedNotes.size} / ${totalCells}`;
+}
+
+document.getElementById('grid').addEventListener('click', async (e) => {
+  const el = e.target.closest('[data-action]');
+  if (!el) return;
+  const key = el.dataset.key;
+  const action = el.dataset.action;
+  const { ri, di, day, row, cell } = parseKey(key);
+  const label = row.task ? `${row.project} \u2013 ${row.task}` : row.project;
+  if (action === 'hrs') {
+    const val = cell.hours.toFixed(2);
+    await copyText(val);
+    copiedHrs.add(key);
+    el.dataset.copied = "true";
+    showToast(`${val}h copied`);
+    updateProgress();
+  } else if (action === 'notes') {
+    await copyText(cell.notes);
+    copiedNotes.add(key);
+    el.dataset.copied = "true";
+    showToast(`Notes copied \u2013 ${label}, ${day.slice(0,3)}`);
+    updateProgress();
+  } else if (action === 'detail') {
+    openModal(ri, di);
+  }
+});
+
+const overlay = document.getElementById('overlay');
+let modalKey = null;
+function openModal(ri, di) {
+  const key = `${ri}-${di}`;
+  modalKey = key;
+  const { day, row, cell } = parseKey(key);
+  const date = REPORT_DATA.dates[di];
+  const label = row.task ? `${row.project} \u2013 ${row.task}` : row.project;
+  document.getElementById('modalTitle').textContent = label;
+  document.getElementById('modalSub').textContent = `${day} ${date}`;
+  document.getElementById('modalHours').textContent = cell.hours.toFixed(2);
+  document.getElementById('modalNotes').textContent = cell.notes;
+  resetModalBtn('mCopyHours', '\u23f1', 'Copy Hours');
+  resetModalBtn('mCopyNotes', '\ud83d\udccb', 'Copy Notes');
+  overlay.classList.add('open');
+}
+function closeModal() { overlay.classList.remove('open'); modalKey = null; }
+overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+document.getElementById('closeBtn').addEventListener('click', closeModal);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+document.getElementById('mCopyHours').addEventListener('click', async () => {
+  if (!modalKey) return;
+  const { cell } = parseKey(modalKey);
+  const val = cell.hours.toFixed(2);
+  await copyText(val);
+  copiedHrs.add(modalKey);
+  const hrsEl = document.querySelector(`.entry-hrs[data-key="${modalKey}"]`);
+  if (hrsEl) hrsEl.dataset.copied = "true";
+  flashModalBtn('mCopyHours', '\u23f1', 'Copy Hours');
+  showToast(`${val}h copied`);
+  updateProgress();
+});
+document.getElementById('mCopyNotes').addEventListener('click', async () => {
+  if (!modalKey) return;
+  const { cell } = parseKey(modalKey);
+  await copyText(cell.notes);
+  copiedNotes.add(modalKey);
+  const notesEl = document.querySelector(`.entry-btn-notes[data-key="${modalKey}"]`);
+  if (notesEl) notesEl.dataset.copied = "true";
+  flashModalBtn('mCopyNotes', '\ud83d\udccb', 'Copy Notes');
+  showToast('Notes copied');
+  updateProgress();
+});
+function flashModalBtn(id, icon, label) { const btn = document.getElementById(id); btn.classList.add('btn-copied'); btn.innerHTML = `<span class="icon">\u2713</span> Copied`; setTimeout(() => resetModalBtn(id, icon, label), 1500); }
+function resetModalBtn(id, icon, label) { const btn = document.getElementById(id); btn.classList.remove('btn-copied'); btn.innerHTML = `<span class="icon">${icon}</span> ${label}`; }
+
+buildGrid();
+</script>
+</body>
+</html>"""
 
 
 # ---------------------------------------------------------------------------
@@ -687,20 +1051,30 @@ def main():
 
     # Aggregate and format
     groups = aggregate(entries)
-    output = format_spp(groups, start, end)
+    output_txt = format_spp(groups, start, end)
+    output_html = format_html(groups, start, end)
 
     # Output
     if args.stdout:
-        print(output)
+        print(output_txt)
     else:
-        out_dir = Path(cfg["output_dir"])
+        # Subfolder per week, named by the Monday of the start date's week
+        week_monday = start - timedelta(days=start.weekday())
+        week_folder = f"week_{week_monday.strftime('%Y-%m-%d')}"
+
+        out_dir = Path(cfg["output_dir"]) / week_folder
         out_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"spp_{start.strftime('%Y-%m-%d')}_{end.strftime('%Y-%m-%d')}.txt"
-        out_path = out_dir / filename
-        out_path.write_text(output, encoding="utf-8")
-        eprint(f"Written to {out_path}")
-        # Also print to stdout for convenience
-        print(output)
+        base = f"spp_{start.strftime('%Y-%m-%d')}_{end.strftime('%Y-%m-%d')}"
+
+        txt_path = out_dir / f"{base}.txt"
+        txt_path.write_text(output_txt, encoding="utf-8")
+
+        html_path = out_dir / f"{base}.html"
+        html_path.write_text(output_html, encoding="utf-8")
+
+        eprint(f"Written to {txt_path}")
+        eprint(f"Written to {html_path}")
+        print(output_txt)
 
 
 if __name__ == "__main__":
