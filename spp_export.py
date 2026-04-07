@@ -125,6 +125,71 @@ def resolve_date_range(args) -> tuple[datetime, datetime]:
 API_BASE = "https://api.clockify.me/api/v1"
 
 
+def _build_ssl_context():
+    """
+    Build an SSL context for HTTPS requests.
+    On Windows, Python's default cert loading can fail if the Windows
+    certificate store contains a malformed certificate (ASN1 nested error).
+    This tries the default path first, then falls back to certifi if
+    installed, then falls back to an unverified context as last resort.
+    """
+    import ssl
+
+    # Try 1: default context (works on most systems)
+    try:
+        ctx = ssl.create_default_context()
+        # Force-load to trigger the error now rather than on first request
+        ctx.load_default_certs()
+        return ctx
+    except ssl.SSLError:
+        pass
+
+    # Try 2: use certifi bundle if available
+    try:
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+        return ctx
+    except ImportError:
+        pass
+
+    # Try 3: build context without the Windows store, using only bundled certs
+    try:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = True
+        ctx.verify_mode = ssl.CERT_REQUIRED
+        # Try loading just the certifi-style path that some Python installs bundle
+        import _ssl
+        if hasattr(ssl, "get_default_verify_paths"):
+            paths = ssl.get_default_verify_paths()
+            if paths.cafile:
+                ctx.load_verify_locations(paths.cafile)
+                return ctx
+    except Exception:
+        pass
+
+    # Last resort: warn and disable verification
+    eprint(
+        "Warning: Could not load SSL certificates. HTTPS requests will proceed "
+        "without certificate verification. To fix this, install certifi:\n"
+        "  pip install certifi"
+    )
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+# Module-level SSL context (built once)
+_SSL_CTX = None
+
+
+def _get_ssl_context():
+    global _SSL_CTX
+    if _SSL_CTX is None:
+        _SSL_CTX = _build_ssl_context()
+    return _SSL_CTX
+
+
 def api_get(path: str, api_key: str, params: dict | None = None) -> list | dict:
     """GET from Clockify API. Returns parsed JSON."""
     url = f"{API_BASE}{path}"
@@ -133,7 +198,7 @@ def api_get(path: str, api_key: str, params: dict | None = None) -> list | dict:
 
     req = urllib.request.Request(url, headers={"X-Api-Key": api_key})
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=30, context=_get_ssl_context()) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
