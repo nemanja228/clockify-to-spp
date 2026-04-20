@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /c/code/local/clockify-to-spp log --oneline)"
+    ]
+  }
+}

@@ -1067,7 +1067,8 @@ def main():
         week_monday = start - timedelta(days=start.weekday())
         week_folder = f"week_{week_monday.strftime('%Y-%m-%d')}"
 
-        out_dir = Path(cfg["output_dir"]) / week_folder
+        raw_out = Path(cfg["output_dir"])
+        out_dir = (Path(__file__).resolve().parent / raw_out if not raw_out.is_absolute() else raw_out) / week_folder
         out_dir.mkdir(parents=True, exist_ok=True)
         base = f"spp_{start.strftime('%Y-%m-%d')}_{end.strftime('%Y-%m-%d')}"
 
