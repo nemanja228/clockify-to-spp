@@ -1,0 +1,7 @@
+{
+  "api_key": "YOUR_API_KEY",
+  "workspace_id": "YOUR_WORKSPACE_ID",
+  "ignored_project_ids": [],
+  "ignored_client_names": [],
+  "output_dir": "../spp_reports"
+}

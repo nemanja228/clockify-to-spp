@@ -52,6 +52,18 @@ def find_config(override: str | None) -> Path:
     for c in candidates:
         if c.exists():
             return c
+
+    # Auto-create from example template on first run
+    example = script_dir / "spp_config.example.json"
+    dest = script_dir / DEFAULT_CONFIG_NAME
+    if example.exists():
+        import shutil
+        shutil.copy(example, dest)
+        die(
+            f"No config found — created {dest} from the example template.\n"
+            f"Open it and replace YOUR_API_KEY and YOUR_WORKSPACE_ID, then re-run."
+        )
+
     die(
         f"Config file not found. Looked in:\n"
         f"  {candidates[0]}\n  {candidates[1]}\n"
