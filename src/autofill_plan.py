@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 
-from autofill_config import Config, Item, fmt_clock, fmt_minutes, merge_intervals, parse_duration
+from autofill_config import Config, Item, Rule, fmt_clock, fmt_minutes, merge_intervals, parse_duration
 
 
 @dataclass
@@ -160,6 +160,26 @@ def allocate_filler(tasks: list[tuple[str, int | None]], available: int, round_t
         if minutes > 0:
             out.append((desc, minutes))
     return out, warnings
+
+
+# ---------------------------------------------------------------------------
+# Event rules
+# ---------------------------------------------------------------------------
+
+def match_rule(title: str, cfg: Config) -> tuple[Rule | None, str]:
+    """Config rules, then learned rules, then default_action. First match wins."""
+    for rule in cfg.event_rules + cfg.learned_rules:
+        if rule.pattern.search(title):
+            return rule, rule.action
+    return None, cfg.default_action
+
+
+def accepted_event(start: int, end: int, title: str, rule: Rule | None, cfg: Config) -> Event:
+    """An accepted event uses the rule's project/task where given, meetings_default otherwise."""
+    project, task = cfg.rule_target(rule) if rule else (cfg.meetings_default.project,
+                                                        cfg.meetings_default.task)
+    tags = (rule.tags if rule and rule.tags else cfg.meetings_default.tags)
+    return Event(start, end, title, project, task, list(tags))
 
 
 # ---------------------------------------------------------------------------

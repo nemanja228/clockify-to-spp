@@ -4,7 +4,9 @@ Fill a day or a week of Clockify time entries from a template.
 
 Companion to spp_export.py. Reads the Clockify API key and workspace from
 spp_config.json (CLOCKIFY_API_KEY in the environment or .env overrides the
-key), and the template from autofill.yaml.
+key), and the template from autofill.yaml. Each calendar feed URL is read from
+the variable its url_env names: the environment, then .env, then a key of the
+same name in spp_config.json. Feed URLs are never printed.
 
 Usage:
     python autofill.py fill day [DATE] [--dry-run] [--no-calendar]
@@ -22,9 +24,11 @@ from pathlib import Path
 import spp_export
 from spp_export import die, eprint
 from autofill_config import (
-    Config, ConfigError, DEFAULT_CONFIG_NAME, fmt_clock, fmt_minutes, load_config, load_dotenv,
+    Config, ConfigError, DEFAULT_CONFIG_NAME, append_learned_rule, fmt_clock, fmt_minutes,
+    learned_rule_for, load_config, load_dotenv,
 )
-from autofill_plan import Block, DayPlan, Event, plan_day
+from autofill_plan import Block, DayPlan, Event, accepted_event, match_rule, plan_day
+from autofill_calendar import CalEvent, load_calendars
 from autofill_clockify import FREE_PLAN_HOURLY_LIMIT, ClockifyOps, recent_filler_default
 
 
@@ -147,14 +151,53 @@ def confirm(prompt: str, input_fn) -> bool:
 # Commands
 # ---------------------------------------------------------------------------
 
-def cmd_fill(days: list[date], cfg: Config, ops: ClockifyOps, catalog: dict, args, input_fn) -> None:
+def prompt_event(ev: CalEvent, input_fn) -> str:
+    while True:
+        answer = ask(f"  {fmt_clock(ev.start)}-{fmt_clock(ev.end)}  {ev.title}  [{ev.feed}]  "
+                     f"add? [y/n/a=always/x=never]: ", input_fn).strip().lower()
+        if answer in ("y", "n", "a", "x"):
+            return answer
+        eprint("  Answer y (yes), n (no), a (always) or x (never).")
+
+
+def resolve_events(working: list[date], cfg: Config, events: list[CalEvent], dry_run: bool,
+                   input_fn) -> dict[date, list[Event]]:
+    """Apply event rules day by day; ask about events whose action is 'ask'."""
+    out: dict[date, list[Event]] = {}
+    for day in working:
+        todays = [ev for ev in events if ev.day == day]
+        header_shown = False
+        for ev in todays:
+            rule, action = match_rule(ev.title, cfg)
+            if action == "ask":
+                if not header_shown:
+                    print(f"{day.strftime('%a')} {day.isoformat()}  calendar events:")
+                    header_shown = True
+                answer = prompt_event(ev, input_fn)
+                if answer in ("a", "x"):
+                    rule = learned_rule_for(ev.title, "accept" if answer == "a" else "ignore")
+                    cfg.learned_rules.append(rule)      # not asked again in this run
+                    if dry_run:
+                        print(f"    (dry run: rule for '{ev.title}' not saved)")
+                    else:
+                        append_learned_rule(cfg.learned_rules_path, rule)
+                action = "accept" if answer in ("y", "a") else "ignore"
+            if action == "accept":
+                out.setdefault(day, []).append(accepted_event(ev.start, ev.end, ev.title, rule, cfg))
+    return out
+
+
+def cmd_fill(days: list[date], cfg: Config, ops: ClockifyOps, catalog: dict, args, input_fn,
+             spp_cfg: dict | None = None) -> None:
     working = [d for d in days if d.weekday() < 5 and d not in cfg.skip_dates]
     tag_id = ops.find_tag(cfg.generated_tag)
     first = min(days) - timedelta(days=14)
     by_day = ops.entries_by_day(ops.list_entries(first, max(days)), tag_id)
 
     events_by_day: dict[date, list[Event]] = {}
-    # Calendar import arrives in step 3; --no-calendar is accepted already.
+    if working and cfg.calendars and not args.no_calendar:
+        cal_events, _ = load_calendars(cfg, spp_cfg, min(working), max(working))
+        events_by_day = resolve_events(working, cfg, cal_events, args.dry_run, input_fn)
 
     fillers: dict[date, str | None] = {}
     previous: str | None = None
@@ -281,7 +324,7 @@ def main(argv: list[str] | None = None, input_fn=input) -> None:
 
     anchor = parse_day(args.date)
     if args.command == "fill":
-        cmd_fill(range_days(args.scope, anchor, 5), cfg, ops, catalog, args, input_fn)
+        cmd_fill(range_days(args.scope, anchor, 5), cfg, ops, catalog, args, input_fn, spp_cfg)
     else:
         cmd_clear(range_days(args.scope, anchor, 7), cfg, ops, catalog, args, input_fn)
     eprint(f"Clockify requests this run: {ops.requests}")

@@ -370,6 +370,24 @@ def load_learned_rules(path: Path) -> list[Rule]:
     return [_parse_rule(r, f"{path.name}[{i}]", learned=True) for i, r in enumerate(raw)]
 
 
+def learned_rule_for(title: str, action: str) -> Rule:
+    """A learned rule matches the exact title (escaped, anchored, case-insensitive)."""
+    return Rule(f"^{re.escape(title.strip())}$", action, learned=True)
+
+
+def append_learned_rule(path: Path, rule: Rule) -> None:
+    """Add one rule to rules.learned.yaml. The hand-edited config is never touched."""
+    raw = []
+    if path.exists():
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or []
+    raw.append({"match": rule.match, "action": rule.action})
+    path.write_text(
+        "# Written by autofill.py when you answer a (always) or x (never). Safe to edit.\n"
+        + yaml.safe_dump(raw, sort_keys=False, allow_unicode=True, width=1000),
+        encoding="utf-8",
+    )
+
+
 # ---------------------------------------------------------------------------
 # .env
 # ---------------------------------------------------------------------------
