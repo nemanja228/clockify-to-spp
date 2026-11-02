@@ -255,7 +255,8 @@ def apply_plans(plans: list[DayPlan], cfg: Config, ops: ClockifyOps, catalog: di
     if used + write_requests > FREE_PLAN_HOURLY_LIMIT:
         eprint(f"Warning: this run has used {used} Clockify requests and the writes need up to "
                f"{write_requests} more. The Free plan allows {FREE_PLAN_HOURLY_LIMIT} per hour, so the "
-               f"apply may stop partway. Rerunning the fill later rebuilds the generated entries.")
+               f"apply may stop partway. Rerun the same fill later: entries already written are kept "
+               f"and only the rest are created.")
     if not confirm(f"{summary[0].upper()}{summary[1:]}? [y/N] ", input_fn):
         print("Cancelled. Nothing written.")
         return
