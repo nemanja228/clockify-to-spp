@@ -179,6 +179,8 @@ def accepted_event(start: int, end: int, title: str, rule: Rule | None, cfg: Con
     project, task = cfg.rule_target(rule) if rule else (cfg.meetings_default.project,
                                                         cfg.meetings_default.task)
     tags = (rule.tags if rule and rule.tags else cfg.meetings_default.tags)
+    if rule and rule.dur:
+        end = start + rule.dur
     return Event(start, end, title, project, task, list(tags))
 
 

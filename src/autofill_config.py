@@ -115,6 +115,7 @@ class Rule:
     task: str | None = None
     tags: list[str] = field(default_factory=list)
     learned: bool = False
+    dur: int | None = None          # when set, an accepted event lasts this long from its start
 
     def __post_init__(self):
         self.pattern = re.compile(self.match, re.IGNORECASE)
@@ -208,8 +209,13 @@ def _parse_rule(d, where: str, learned: bool = False) -> Rule:
     action = str(_require(d, "action", where))
     if action not in ACTIONS:
         raise ConfigError(f"{where}: action must be one of {', '.join(ACTIONS)}, got {action!r}")
+    dur = None
+    if d.get("dur") is not None:
+        dur = parse_duration(d["dur"], f"{where}.dur")
+        if dur <= 0:
+            raise ConfigError(f"{where}: dur must be more than 0")
     try:
-        return Rule(match, action, d.get("project"), d.get("task"), _tags(d, where), learned)
+        return Rule(match, action, d.get("project"), d.get("task"), _tags(d, where), learned, dur)
     except re.error as e:
         raise ConfigError(f"{where}: invalid regular expression {match!r}: {e}")
 

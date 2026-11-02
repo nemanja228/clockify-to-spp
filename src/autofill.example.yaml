@@ -33,4 +33,6 @@ event_rules:
   - {match: "lunch|focus|OOO", action: ignore}
   - {match: "standup", action: accept, task: Meetings}
   - {match: "1:1|sprint", action: accept}
+  # Optional dur: book an accepted event as this long from its calendar start.
+  # - {match: "daily sync", action: accept, dur: 15m}
 default_action: ask

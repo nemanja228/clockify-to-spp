@@ -216,6 +216,23 @@ class Rules(unittest.TestCase):
         self.assertEqual(got, {("Daily Standup", "PIP", "Standup"), ("Other", "PIP", "Meetings")})
 
 
+class RuleDuration(unittest.TestCase):
+    def test_rule_dur_keeps_the_start_and_sets_the_length(self):
+        cfg = cfg_with(event_rules=[{"match": "CBR / BPR", "action": "accept", "task": "Support", "dur": "15m"},
+                                    {"match": "standup", "action": "accept"}])
+        evs = [CalEvent("google", TUE, hm("10:00"), hm("10:30"), "CBR / BPR Daily Standup"),
+               CalEvent("google", TUE, hm("09:30"), hm("10:00"), "PIP Daily Standup")]
+        out = autofill.resolve_events([TUE], cfg, evs, True, lambda p: "n")
+        got = {e.title: (e.start, e.end, e.task) for e in out[TUE]}
+        self.assertEqual(got["CBR / BPR Daily Standup"], (hm("10:00"), hm("10:15"), "Support"))
+        self.assertEqual(got["PIP Daily Standup"], (hm("09:30"), hm("10:00"), "Meetings"))
+
+    def test_bad_rule_dur_stops_at_startup(self):
+        from autofill_config import ConfigError
+        with self.assertRaises(ConfigError):
+            cfg_with(event_rules=[{"match": "x", "action": "accept", "dur": "0m"}])
+
+
 class Prompts(unittest.TestCase):
     EVENTS = [CalEvent("work", TUE, 600, 630, "Vendor call"), CalEvent("work", TUE, 700, 730, "Random sync"),
               CalEvent("work", WED, 600, 630, "Vendor call")]
