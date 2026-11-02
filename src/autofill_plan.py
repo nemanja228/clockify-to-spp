@@ -6,6 +6,8 @@ config and the filler tasks, and returns a plan. No network calls, so it can
 be tested with fixed inputs. Times are minutes since local midnight.
 """
 
+import hashlib
+import random
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -89,8 +91,16 @@ def round_up(minutes: int, step: int) -> int:
 # ---------------------------------------------------------------------------
 
 def jitter_minutes(day: date, desc: str, spread: int, round_to: int) -> int:
-    """Deterministic change to a flexible item's duration. Step 1: none yet."""
-    return 0
+    """
+    Deterministic change in [-spread, +spread], rounded to round_to.
+    Seeded from the date and description, so a rerun of the same day matches.
+    """
+    if spread <= 0:
+        return 0
+    # sha256 rather than hash(): str hashes change between Python processes.
+    seed = int.from_bytes(hashlib.sha256(f"{day.isoformat()}|{desc}".encode("utf-8")).digest()[:8], "big")
+    change = random.Random(seed).uniform(-spread, spread)
+    return max(-spread, min(spread, round_near(change, round_to)))
 
 
 def jittered_duration(day: date, item: Item, cfg: Config) -> int:
