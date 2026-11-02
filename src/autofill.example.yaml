@@ -24,7 +24,7 @@ meetings_default: {project: PIP, task: Meetings}
 skip_dates: [2026-11-11]
 
 calendars:
-  - {name: work, url_env: CAL_WORK_ICS}
+  - {name: outlook, url_env: CAL_OUTLOOK_ICS}
   - {name: google, url_env: CAL_GOOGLE_ICS}
 
 my_emails: [me@example.com]   # used to detect declined invites

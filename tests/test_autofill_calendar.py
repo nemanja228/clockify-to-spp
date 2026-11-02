@@ -98,7 +98,7 @@ END:VEVENT
 END:VCALENDAR
 """
 
-CALS = [{"name": "work", "url_env": "AF_TEST_CAL_WORK"}, {"name": "google", "url_env": "AF_TEST_CAL_GOOGLE"}]
+CALS = [{"name": "outlook", "url_env": "AF_TEST_CAL_OUTLOOK"}, {"name": "google", "url_env": "AF_TEST_CAL_GOOGLE"}]
 
 
 def cfg_with(**kw):
@@ -146,34 +146,34 @@ class Parsing(unittest.TestCase):
 
 class Loading(unittest.TestCase):
     def setUp(self):
-        os.environ["AF_TEST_CAL_WORK"] = "https://secret.example/work-token.ics"
+        os.environ["AF_TEST_CAL_OUTLOOK"] = "https://secret.example/outlook-token.ics"
         os.environ.pop("AF_TEST_CAL_GOOGLE", None)
 
     def tearDown(self):
-        os.environ.pop("AF_TEST_CAL_WORK", None)
+        os.environ.pop("AF_TEST_CAL_OUTLOOK", None)
 
     def test_duplicates_across_feeds_are_removed_and_json_supplies_a_missing_variable(self):
-        feeds = {"https://secret.example/work-token.ics": WORK, "https://json.example/g.ics": GOOGLE}
+        feeds = {"https://secret.example/outlook-token.ics": WORK, "https://json.example/g.ics": GOOGLE}
         spp_cfg = {"AF_TEST_CAL_GOOGLE": "https://json.example/g.ics"}
         events, reports = load_calendars(cfg_with(), spp_cfg, MON, FRI, fetch=lambda u: feeds[u])
         sprints = [e for e in events if e.title.strip().lower() == "sprint review"]
         self.assertEqual(len(sprints), 1)
-        self.assertEqual(sprints[0].feed, "work")
+        self.assertEqual(sprints[0].feed, "outlook")
         self.assertIn("Dentist", {e.title for e in events})
         self.assertTrue(all(r.ok for r in reports))
 
     def test_failing_feed_warns_by_name_without_url_and_the_rest_continues(self):
         def fetch(url):
-            if "work" in url:
+            if "outlook" in url:
                 raise OSError(f"boom for {url}")
             return GOOGLE
 
         err = io.StringIO()
         with redirect_stderr(err):
             events, reports = load_calendars(cfg_with(), {"AF_TEST_CAL_GOOGLE": "https://g"}, MON, FRI, fetch=fetch)
-        self.assertIn("calendar 'work' could not be fetched", err.getvalue())
+        self.assertIn("calendar 'outlook' could not be fetched", err.getvalue())
         self.assertNotIn("secret.example", err.getvalue())
-        self.assertNotIn("work-token", err.getvalue())
+        self.assertNotIn("outlook-token", err.getvalue())
         self.assertEqual({e.feed for e in events}, {"google"})
 
     def test_unparseable_feed_warns_and_continues(self):
