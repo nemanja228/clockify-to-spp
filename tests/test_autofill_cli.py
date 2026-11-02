@@ -98,10 +98,10 @@ class Apply(unittest.TestCase):
 
 
 class Prompts(unittest.TestCase):
-    def test_week_default_is_previous_answer_and_dash_means_none(self):
+    def test_previous_answer_is_a_hint_only_and_dash_means_none(self):
         prompts = []
-        # Mon typed, Tue Enter (takes Mon's), Wed "-", Thu Enter with no default re-asks then "b", Fri Enter.
-        answers = ["EXTITANS-1 a", "", "-", "", "b", ""]
+        # Mon typed; Tue Enter re-asks, then typed; Wed "-"; Thu typed; Fri typed.
+        answers = ["EXTITANS-1 a", "", "EXTITANS-1 a", "-", "b", "c"]
 
         def fake_input(p):
             prompts.append(p)
@@ -112,11 +112,14 @@ class Prompts(unittest.TestCase):
         with redirect_stdout(out):
             autofill.cmd_fill(days, make_cfg(), FakeOps(), CATALOG,
                               Namespace(dry_run=True, no_calendar=True), fake_input)
-        self.assertEqual(prompts[0], "Mon 2026-11-02  development: ")
-        self.assertEqual(prompts[1], "Tue 2026-11-03  development [EXTITANS-1 a]: ")
-        self.assertEqual(prompts[2], "Wed 2026-11-04  development [EXTITANS-1 a]: ")
-        self.assertEqual(prompts[3], "Thu 2026-11-05  development: ")
-        self.assertEqual(prompts[5], "Fri 2026-11-06  development [b]: ")
+        self.assertEqual(prompts, [
+            "Mon 2026-11-02  development: ",
+            "Tue 2026-11-03  development [last: EXTITANS-1 a]: ",
+            "Tue 2026-11-03  development [last: EXTITANS-1 a]: ",     # Enter alone asks again
+            "Wed 2026-11-04  development [last: EXTITANS-1 a]: ",
+            "Thu 2026-11-05  development: ",
+            "Fri 2026-11-06  development [last: b]: ",
+        ])
         self.assertIn("UNDER", out.getvalue())   # Wednesday has no filler
 
     def test_clockify_default_from_recent_generated_filler(self):

@@ -129,18 +129,17 @@ def ask(prompt: str, input_fn) -> str:
         die("No input available for the prompt (stdin closed).")
 
 
-def prompt_filler(day: date, cfg: Config, default: str | None, input_fn) -> str | None:
+def prompt_filler(day: date, cfg: Config, last: str | None, input_fn) -> str | None:
+    # The previous day's work is shown as a reminder only; the day's work is always typed.
     label = cfg.filler.task.lower()
-    shown = f" [{default}]" if default else ""
+    shown = f" [last: {last}]" if last else ""
     while True:
         answer = ask(f"{day.strftime('%a')} {day.isoformat()}  {label}{shown}: ", input_fn).strip()
         if answer == "-":
             return None
         if answer:
             return answer
-        if default:
-            return default
-        eprint("  Type the filler tasks, or - for no filler this day.")
+        eprint("  Type the day's work (tickets or epics, ; between them), or - for none.")
 
 
 def confirm(prompt: str, input_fn) -> bool:
