@@ -258,6 +258,27 @@ class FillerParsing(unittest.TestCase):
                 self.assertFalse(overlaps(a, b), (a, b))
 
 
+class FillerRules(unittest.TestCase):
+    def test_matching_filler_task_books_to_the_rule_target_and_total_stays_exact(self):
+        cfg = make_cfg(filler_rules=[{"match": "EXTITANS-2498", "task": "GPO PIP"}])
+        plan = plan_day(TUE, cfg, [], [], [], "EXTITANS-2878 4h; EXTITANS-2498")
+        booked = {}
+        for b in plan.creates:
+            if b.source == "filler":
+                booked.setdefault((b.desc, b.project, b.task), 0)
+                booked[(b.desc, b.project, b.task)] += b.dur
+        self.assertEqual(booked, {("EXTITANS-2878", "PIP", "Development"): 240,
+                                  ("EXTITANS-2498", "PIP", "GPO PIP"): 480 - 105 - 240})
+        self.assertEqual(plan.total, 480)
+
+    def test_filler_rules_are_validated_like_other_targets(self):
+        from autofill_config import ConfigError
+        cfg = make_cfg(filler_rules=[{"match": "GPO", "project": "Other", "task": "GPO PIP"}])
+        self.assertIn(("Other", "GPO PIP"), {(p, t) for p, t, _ in cfg.project_task_pairs()})
+        with self.assertRaises(ConfigError):
+            make_cfg(filler_rules=[{"match": "GPO"}])
+
+
 class CalendarEventsInPlanner(unittest.TestCase):
     def test_accepted_event_keeps_exact_times_and_beats_overlapping_template(self):
         ev = Event(hm("10:07"), hm("10:22"), "Standup", "PIP", "Meetings")

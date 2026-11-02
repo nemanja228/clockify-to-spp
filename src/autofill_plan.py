@@ -296,8 +296,9 @@ def plan_day(day: date, cfg: Config, manual: list[Block], generated: list[Block]
                     if take < min(step, minutes):
                         gi += 1
                         continue
-                    placed.append(Block(gs, gs + take, cfg.filler.project, cfg.filler.task, desc,
-                                        "filler", "create", cfg.filler.tags))
+                    target = cfg.filler_target(desc)
+                    placed.append(Block(gs, gs + take, target.project, target.task, desc,
+                                        "filler", "create", target.tags))
                     minutes -= take
                     rest = round_up(gs + take, step)
                     if ge - rest < step:
@@ -306,8 +307,9 @@ def plan_day(day: date, cfg: Config, manual: list[Block], generated: list[Block]
                         gaps[gi] = (rest, ge)
                 else:
                     start = round_up(max([cfg.day_start] + [e for _, e in busy()]), step)
-                    placed.append(Block(start, start + minutes, cfg.filler.project, cfg.filler.task,
-                                        desc, "filler", "create", cfg.filler.tags))
+                    target = cfg.filler_target(desc)
+                    placed.append(Block(start, start + minutes, target.project, target.task,
+                                        desc, "filler", "create", target.tags))
                     plan.past_day_end = True
                     minutes = 0
 

@@ -205,7 +205,7 @@ def cmd_fill(days: list[date], cfg: Config, ops: ClockifyOps, catalog: dict, arg
         if i > 0:
             default = previous
         else:
-            default = recent_filler_default(by_day, day, cfg.filler.project, cfg.filler.task)
+            default = recent_filler_default(by_day, day, cfg)
         fillers[day] = prompt_filler(day, cfg, default, input_fn)
         previous = fillers[day]
 

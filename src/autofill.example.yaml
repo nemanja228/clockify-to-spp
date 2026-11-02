@@ -19,6 +19,10 @@ items:
 
 filler: {project: PIP, task: Development}
 
+# Optional: a filler task whose text matches books to another project/task (missing one = filler's).
+# filler_rules:
+#   - {match: "EXTITANS-1234", task: Research}
+
 meetings_default: {project: PIP, task: Meetings}
 
 skip_dates: [2026-11-11]

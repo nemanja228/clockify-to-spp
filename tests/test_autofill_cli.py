@@ -124,8 +124,19 @@ class Prompts(unittest.TestCase):
         f2 = Block(800, 900, "PIP", "Development", "research", "manual", "keep")
         other = Block(500, 550, "PIP", "Code review", "PR reviews", "manual", "keep")
         by_day = {date(2026, 10, 29): ([], [other, f2, f1]), date(2026, 10, 20): ([], [f1])}
-        self.assertEqual(recent_filler_default(by_day, MON, "PIP", "Development"), "EXTITANS-9 x; research")
-        self.assertIsNone(recent_filler_default({date(2026, 10, 1): ([], [f1])}, MON, "PIP", "Development"))
+        self.assertEqual(recent_filler_default(by_day, MON, make_cfg()), "EXTITANS-9 x; research")
+        self.assertIsNone(recent_filler_default({date(2026, 10, 1): ([], [f1])}, MON, make_cfg()))
+
+    def test_default_skips_template_items_and_meetings_on_the_filler_task_but_finds_routed_filler(self):
+        # Template item, accepted standup and filler all on PIP / Development; GPO filler routed elsewhere.
+        items = [{"desc": "PR reviews", "project": "PIP", "task": "Development", "dur": "1h"}]
+        cfg = make_cfg(items=items, event_rules=[{"match": "standup", "action": "accept", "task": "Development"}],
+                       filler_rules=[{"match": "GPO-1", "task": "GPO"}])
+        gen = [Block(480, 540, "PIP", "Development", "PR reviews", "manual", "keep"),
+               Block(570, 600, "PIP", "Development", "PIP Daily Standup", "manual", "keep"),
+               Block(600, 700, "PIP", "Development", "EXTITANS-9", "manual", "keep"),
+               Block(700, 800, "PIP", "GPO", "GPO-1 epic", "manual", "keep")]
+        self.assertEqual(recent_filler_default({date(2026, 10, 30): ([], gen)}, MON, cfg), "EXTITANS-9; GPO-1 epic")
 
 
 class Mappings(unittest.TestCase):

@@ -213,15 +213,30 @@ class ClockifyOps:
         return out
 
 
+def is_filler_entry(b: Block, cfg) -> bool:
+    """
+    Generated entries carry no record of their source, and template items or
+    meetings can share the filler's task. So a filler entry is one on a filler
+    target whose description is not a template item and not an accepted event.
+    """
+    targets = {(cfg.filler.project, cfg.filler.task)} | {(r.project, r.task) for r in cfg.filler_rules}
+    if (b.project, b.task) not in targets or not b.desc:
+        return False
+    if b.desc.strip().lower() in {i.desc.strip().lower() for i in cfg.items}:
+        return False
+    return not any(r.action == "accept" and r.pattern.search(b.desc)
+                   for r in cfg.event_rules + cfg.learned_rules)
+
+
 def recent_filler_default(by_day: dict[date, tuple[list[Block], list[Block]]], before: date,
-                          project: str, task: str, lookback_days: int = 14) -> str | None:
+                          cfg, lookback_days: int = 14) -> str | None:
     """Descriptions of the most recent generated filler entries within the lookback window."""
     for offset in range(1, lookback_days + 1):
         day = before - timedelta(days=offset)
         _, generated = by_day.get(day, ([], []))
         descs = []
         for b in sorted(generated, key=lambda b: b.start):
-            if b.project == project and b.task == task and b.desc and b.desc not in descs:
+            if is_filler_entry(b, cfg) and b.desc not in descs:
                 descs.append(b.desc)
         if descs:
             return "; ".join(descs)

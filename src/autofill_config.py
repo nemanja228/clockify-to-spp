@@ -122,6 +122,18 @@ class Rule:
 
 
 @dataclass
+class FillerRule:
+    """Books a filler task whose description matches to another project/task."""
+    match: str
+    project: str
+    task: str
+    tags: list[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        self.pattern = re.compile(self.match, re.IGNORECASE)
+
+
+@dataclass
 class Config:
     path: Path
     timezone: str
@@ -141,6 +153,7 @@ class Config:
     my_emails: list[str]
     event_rules: list[Rule]
     default_action: str
+    filler_rules: list[FillerRule] = field(default_factory=list)
     learned_rules: list[Rule] = field(default_factory=list)
 
     @property
@@ -151,6 +164,7 @@ class Config:
         """Every (project, task, where) the config can write entries to."""
         pairs = [(i.project, i.task, f"item '{i.desc}'") for i in self.items]
         pairs.append((self.filler.project, self.filler.task, "filler"))
+        pairs += [(r.project, r.task, f"filler rule '{r.match}'") for r in self.filler_rules]
         pairs.append((self.meetings_default.project, self.meetings_default.task, "meetings_default"))
         for r in self.event_rules + self.learned_rules:
             if r.action == "accept":
@@ -162,6 +176,13 @@ class Config:
         return (rule.project or self.meetings_default.project,
                 rule.task or self.meetings_default.task)
 
+    def filler_target(self, desc: str) -> Target:
+        """The first filler rule matching the task description wins; otherwise the filler itself."""
+        for r in self.filler_rules:
+            if r.pattern.search(desc):
+                return Target(r.project, r.task, r.tags or self.filler.tags)
+        return self.filler
+
 
 # ---------------------------------------------------------------------------
 # Loading and validation
@@ -170,7 +191,7 @@ class Config:
 _KNOWN_KEYS = {
     "timezone", "target", "day_start", "day_end", "round_to", "jitter", "generated_tag",
     "breaks", "items", "filler", "meetings_default", "skip_dates", "calendars",
-    "my_emails", "event_rules", "default_action",
+    "my_emails", "event_rules", "default_action", "filler_rules",
 }
 
 
@@ -216,6 +237,19 @@ def _parse_rule(d, where: str, learned: bool = False) -> Rule:
             raise ConfigError(f"{where}: dur must be more than 0")
     try:
         return Rule(match, action, d.get("project"), d.get("task"), _tags(d, where), learned, dur)
+    except re.error as e:
+        raise ConfigError(f"{where}: invalid regular expression {match!r}: {e}")
+
+
+def _parse_filler_rule(d, where: str, filler: Target) -> FillerRule:
+    if not isinstance(d, dict):
+        raise ConfigError(f"{where}: must be a mapping")
+    match = str(_require(d, "match", where))
+    if not d.get("project") and not d.get("task"):
+        raise ConfigError(f"{where}: give a project, a task, or both")
+    try:
+        return FillerRule(match, str(d.get("project") or filler.project), str(d.get("task") or filler.task),
+                          _tags(d, where))
     except re.error as e:
         raise ConfigError(f"{where}: invalid regular expression {match!r}: {e}")
 
@@ -289,6 +323,8 @@ def parse_config(raw: dict, path: Path) -> Config:
             raise ConfigError(f"{where}: never put a feed URL in the config; name an environment variable in url_env")
         calendars.append(Calendar(str(_require(c, "name", where)), str(_require(c, "url_env", where))))
 
+    filler = _target(_require(raw, "filler", "config"), "filler")
+
     default_action = str(raw.get("default_action", "ask"))
     if default_action not in ACTIONS:
         raise ConfigError(f"default_action must be one of {', '.join(ACTIONS)}, got {default_action!r}")
@@ -305,7 +341,9 @@ def parse_config(raw: dict, path: Path) -> Config:
         generated_tag=str(raw.get("generated_tag") or "auto"),
         breaks=breaks,
         items=items,
-        filler=_target(_require(raw, "filler", "config"), "filler"),
+        filler=filler,
+        filler_rules=[_parse_filler_rule(r, f"filler_rules[{i}]", filler)
+                      for i, r in enumerate(raw.get("filler_rules") or [])],
         meetings_default=_target(raw.get("meetings_default") or raw["filler"], "meetings_default"),
         skip_dates={_parse_date(v, "skip_dates") for v in (raw.get("skip_dates") or [])},
         calendars=calendars,
