@@ -204,6 +204,8 @@ class ClockifyOps:
                 desc=(e.get("description") or "").strip(),
                 source="manual",
                 action="keep",
+                tags=sorted(t.get("name", "") for t in (e.get("tags") or [])
+                            if isinstance(t, dict) and t.get("id") != tag_id),
                 entry_id=e.get("id"),
             )
             manual, generated = out.setdefault(day, ([], []))

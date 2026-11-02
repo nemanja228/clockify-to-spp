@@ -47,15 +47,29 @@ class EmptyDay(unittest.TestCase):
 
 
 class Rerun(unittest.TestCase):
-    def test_second_run_deletes_old_generated_and_recreates_identically(self):
+    def test_second_run_keeps_matching_generated_entries_and_writes_nothing(self):
         cfg = make_cfg()
         first = plan_day(MON, cfg, [], [], [], "dev")
         generated = [Block(b.start, b.end, b.project, b.task, b.desc, "manual", "keep", entry_id=f"g{i}")
                      for i, b in enumerate(first.creates)]
         second = plan_day(MON, cfg, [], generated, [], "dev")
-        self.assertEqual(creates(first), creates(second))
-        self.assertEqual(sorted(b.entry_id for b in second.deletes), sorted(b.entry_id for b in generated))
-        self.assertEqual(second.total, 480)   # deletions are not counted
+        self.assertEqual(second.creates, [])
+        self.assertEqual(second.deletes, [])
+        kept = [(b.start, b.end, b.desc, b.source) for b in second.rows if b.action == "keep"]
+        self.assertEqual(kept, creates(first))
+        self.assertEqual(sorted(b.entry_id for b in second.rows), sorted(b.entry_id for b in generated))
+        self.assertEqual(second.total, 480)
+
+    def test_changed_plan_deletes_only_stale_generated_entries(self):
+        cfg = make_cfg()
+        first = plan_day(TUE, cfg, [], [], [], "dev")
+        generated = [Block(b.start, b.end, b.project, b.task, b.desc, "manual", "keep", entry_id=f"g{i}")
+                     for i, b in enumerate(first.creates)]
+        second = plan_day(TUE, cfg, [], generated, [], "other work")   # filler text changed
+        self.assertEqual({b.desc for b in second.deletes}, {"dev"})
+        self.assertEqual({b.desc for b in second.creates}, {"other work"})
+        self.assertEqual({b.desc for b in second.rows if b.action == "keep"}, {"PR reviews", "Support / email"})
+        self.assertEqual(second.total, 480)
 
 
 class ManualEntries(unittest.TestCase):
@@ -85,6 +99,68 @@ class ManualEntries(unittest.TestCase):
         self.assertIn("Weekly planning", plan.dropped[0][0])
         self.assertIn("manual", plan.dropped[0][1])
         self.assertEqual(plan.total, 480)
+
+
+class AlreadyLogged(unittest.TestCase):
+    def test_template_items_logged_by_hand_are_not_added_again(self):
+        logged = [manual("08:00", "08:40", desc="pr reviews "), manual("16:00", "16:30", desc="Weekly planning")]
+        plan = plan_day(MON, make_cfg(), logged, [], [], "dev")
+        template = [b.desc for b in plan.creates if b.source == "template"]
+        self.assertEqual(template, ["Support / email"])
+        self.assertEqual(len(plan.dropped), 2)
+        for name in ("PR reviews", "Weekly planning"):
+            self.assertTrue(any(name in what and why == "already logged manually" for what, why in plan.dropped),
+                            (name, plan.dropped))
+        self.assertEqual(plan.total, 480)
+
+
+class MinimumEntryLength(unittest.TestCase):
+    def cfg15(self, **kw):
+        return make_cfg(round_to="15m", **kw)
+
+    def assert_no_short_entries(self, plan, minimum=15):
+        for b in plan.creates:
+            if b.source != "calendar":
+                self.assertGreaterEqual(b.dur, minimum, b)
+
+    def test_short_gaps_stay_empty_and_total_still_exact(self):
+        # Manual 09:50-10:52 leaves 09:45..09:50 and 10:52..11:00 slivers.
+        plan = plan_day(TUE, self.cfg15(), [manual("09:52", "10:52")], [], [], "dev")
+        self.assert_no_short_entries(plan)
+        self.assertEqual(plan.total, 480)
+
+    def test_task_tail_never_shorter_than_round_to(self):
+        # 2h40m + 1h05m odd remainders across several gaps.
+        ms = [manual("09:07", "09:52"), manual("11:10", "11:47"), manual("14:03", "14:31")]
+        for text in ("a 2h40m; b", "a; b; c", "x"):
+            plan = plan_day(TUE, self.cfg15(), ms, [], [], text)
+            self.assert_no_short_entries(plan)
+            self.assertEqual(plan.total, 480, text)
+
+    def test_less_than_round_to_left_means_no_filler(self):
+        plan = plan_day(TUE, self.cfg15(), [manual("08:00", "14:10")], [], [], "dev")
+        self.assertFalse([b for b in plan.creates if b.source == "filler"])
+        self.assertTrue(any("no filler entry" in w for w in plan.warnings))
+        self.assertEqual(plan.diff, -5)
+
+    def test_meetings_keep_their_exact_short_length(self):
+        ev = Event(hm("10:07"), hm("10:12"), "Quick sync", "PIP", "Meetings")
+        plan = plan_day(TUE, self.cfg15(), [], [], [ev], "dev")
+        sync = next(b for b in plan.creates if b.source == "calendar")
+        self.assertEqual(sync.dur, 5)
+        self.assert_no_short_entries(plan)
+        self.assertEqual(plan.total, 480)
+
+    def test_jitter_moves_in_15_minute_steps(self):
+        cfg = self.cfg15(jitter="15m")
+        seen = set()
+        for d in [date(2026, 11, 2) + __import__("datetime").timedelta(days=i) for i in range(28)]:
+            plan = plan_day(d, cfg, [], [], [], "dev")
+            for b in plan.creates:
+                if b.desc == "PR reviews":
+                    seen.add(b.dur)
+        self.assertTrue(seen <= {30, 45, 60}, seen)
+        self.assertGreater(len(seen), 1)
 
 
 class OverTarget(unittest.TestCase):

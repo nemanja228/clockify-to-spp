@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 
-from autofill_config import Config, Item, fmt_clock, merge_intervals, parse_duration
+from autofill_config import Config, Item, fmt_clock, fmt_minutes, merge_intervals, parse_duration
 
 
 @dataclass
@@ -142,12 +142,14 @@ def allocate_filler(tasks: list[tuple[str, int | None]], available: int, round_t
     remaining = available - explicit
     shares: dict[str, int] = {}
     if shared:
-        if remaining <= 0:
-            warnings.append(f"no filler time left for: {', '.join(shared)}")
-        else:
-            each = (remaining // len(shared)) // round_to * round_to
-            for i, desc in enumerate(shared):
-                shares[i] = each if i < len(shared) - 1 else remaining - each * (len(shared) - 1)
+        # Each share is at least round_to; tasks that don't fit get none and a warning.
+        fit = min(len(shared), max(0, remaining) // round_to)
+        if fit < len(shared):
+            warnings.append(f"no filler time left for: {', '.join(shared[fit:])}")
+        if fit:
+            each = max(round_to, (remaining // fit) // round_to * round_to)
+            for i in range(fit):
+                shares[i] = each if i < fit - 1 else remaining - each * (fit - 1)
     out, si = [], 0
     for desc, d in tasks:
         if d is None:
@@ -192,8 +194,8 @@ def plan_day(day: date, cfg: Config, manual: list[Block], generated: list[Block]
     step = cfg.round_to
     plan.rows.extend(Block(b.start, b.end, b.project, b.task, b.desc, "manual", "keep", b.tags, b.entry_id)
                      for b in manual)
-    plan.rows.extend(Block(b.start, b.end, b.project, b.task, b.desc, "generated", "delete", b.tags, b.entry_id)
-                     for b in generated)
+    # A template item whose description was already logged by hand that day is not added again.
+    logged = {m.desc.strip().lower() for m in manual if m.desc.strip()}
 
     breaks = [(b.at, b.at + b.dur) for b in cfg.breaks]
     placed: list[Block] = []     # new entries, in placement order
@@ -211,6 +213,9 @@ def plan_day(day: date, cfg: Config, manual: list[Block], generated: list[Block]
                                   item.project, item.task, item.desc, "template", "create", item.tags))
     for cand in anchored:
         label = f"{fmt_clock(cand.start)}-{fmt_clock(cand.end)} {cand.desc} ({cand.source})"
+        if cand.source == "template" and cand.desc.strip().lower() in logged:
+            plan.dropped.append((label, "already logged manually"))
+            continue
         hit = next((m for m in manual if m.overlaps(cand.start, cand.end)), None)
         if hit:
             plan.dropped.append((label, f"overlaps manual entry '{hit.desc}'"))
@@ -227,6 +232,9 @@ def plan_day(day: date, cfg: Config, manual: list[Block], generated: list[Block]
     # Flexible template items, in config order, into the earliest gap that fits whole.
     for item in cfg.items:
         if item.anchored or day.weekday() not in item.days:
+            continue
+        if item.desc.strip().lower() in logged:
+            plan.dropped.append((f"{item.desc} (template)", "already logged manually"))
             continue
         dur = jittered_duration(day, item, cfg)
         start = None
@@ -245,24 +253,35 @@ def plan_day(day: date, cfg: Config, manual: list[Block], generated: list[Block]
     used = sum(b.dur for b in manual) + sum(b.dur for b in placed)
     available = cfg.target - used
     tasks = parse_filler(filler_text)
-    if available > 0 and tasks:
+    if tasks and 0 < available < step:
+        plan.warnings.append(f"only {fmt_minutes(available)} left for the filler, less than "
+                             f"{fmt_minutes(step)}; no filler entry created")
+    elif available > 0 and tasks:
         alloc, warnings = allocate_filler(tasks, available, step)
         plan.warnings.extend(warnings)
+        # No filler piece shorter than round_to: short gaps stay empty, and a task is
+        # never split so that its tail is shorter than round_to.
         gaps = [(round_up(s, step), e) for s, e in free_gaps(busy(), cfg.day_start, cfg.day_end)]
         gaps = [(s, e) for s, e in gaps if e - s >= step]
-        cursor_gap = 0
+        gi = 0
         for desc, minutes in alloc:
             while minutes > 0:
-                if cursor_gap < len(gaps):
-                    gs, ge = gaps[cursor_gap]
+                if gi < len(gaps):
+                    gs, ge = gaps[gi]
                     take = min(minutes, ge - gs)
+                    if 0 < minutes - take < step:
+                        take = minutes - step
+                    if take < min(step, minutes):
+                        gi += 1
+                        continue
                     placed.append(Block(gs, gs + take, cfg.filler.project, cfg.filler.task, desc,
                                         "filler", "create", cfg.filler.tags))
                     minutes -= take
-                    if gs + take >= ge:
-                        cursor_gap += 1
+                    rest = round_up(gs + take, step)
+                    if ge - rest < step:
+                        gi += 1
                     else:
-                        gaps[cursor_gap] = (gs + take, ge)
+                        gaps[gi] = (rest, ge)
                 else:
                     start = round_up(max([cfg.day_start] + [e for _, e in busy()]), step)
                     placed.append(Block(start, start + minutes, cfg.filler.project, cfg.filler.task,
@@ -270,7 +289,18 @@ def plan_day(day: date, cfg: Config, manual: list[Block], generated: list[Block]
                     plan.past_day_end = True
                     minutes = 0
 
+    # Generated entries that already match the plan are kept rather than rebuilt.
+    stale = list(generated)
+    for b in placed:
+        key = (b.start, b.end, b.desc, b.project, b.task, sorted(b.tags))
+        match = next((g for g in stale
+                      if (g.start, g.end, g.desc, g.project, g.task, sorted(g.tags)) == key), None)
+        if match:
+            stale.remove(match)
+            b.action, b.entry_id = "keep", match.entry_id
     plan.rows.extend(placed)
+    plan.rows.extend(Block(g.start, g.end, g.project, g.task, g.desc, "generated", "delete", g.tags, g.entry_id)
+                     for g in stale)
     if any(b.end > cfg.day_end for b in placed):
         plan.past_day_end = True
     order = {"keep": 0, "create": 0, "delete": 1}
