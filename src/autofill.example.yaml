@@ -1,0 +1,42 @@
+# Template for autofill.py. Copy to autofill.yaml (gitignored) and edit.
+# Feed URLs and the API key never go here: url_env names an environment
+# variable, set in your shell or in the untracked .env file.
+timezone: Europe/Belgrade
+target: 8h
+day_start: "09:00"
+day_end: "17:30"       # latest end for placed items
+round_to: 5m            # template and filler times only; calendar events stay exact
+jitter: 15m             # default jitter range for flexible items (plus or minus)
+generated_tag: auto
+
+breaks:                 # not working time: no entry, not counted toward the target
+  - {at: "12:30", dur: 30m}   # lunch
+
+items:
+  - {desc: PR reviews, project: PIP, task: Code review, dur: 45m}
+  - {desc: Support / email, project: PIP, task: Support, dur: 1h}
+  - {desc: Weekly planning, project: PIP, task: Meetings, at: "10:00", dur: 30m, days: [mon], jitter: 0m}
+
+filler: {project: PIP, task: Development}
+
+# Optional: a filler task whose text matches books to another project/task (missing one = filler's).
+# filler_rules:
+#   - {match: "EXTITANS-1234", task: Research}
+
+meetings_default: {project: PIP, task: Meetings}
+
+skip_dates: [2026-11-11]
+
+calendars:
+  - {name: outlook, url_env: CAL_OUTLOOK_ICS}
+  - {name: google, url_env: CAL_GOOGLE_ICS}
+
+my_emails: [me@example.com]   # used to detect declined invites
+
+event_rules:
+  - {match: "lunch|focus|OOO", action: ignore}
+  - {match: "standup", action: accept, task: Meetings}
+  - {match: "1:1|sprint", action: accept}
+  # Optional dur: book an accepted event as this long from its calendar start.
+  # - {match: "daily sync", action: accept, dur: 15m}
+default_action: ask

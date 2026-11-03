@@ -1,0 +1,6 @@
+# Needed only by the autofill command (src/autofill.py).
+# The SPP export (src/spp_export.py) remains stdlib-only.
+PyYAML>=6.0
+icalendar>=6.0
+recurring-ical-events>=3.3
+tzdata>=2024.1
